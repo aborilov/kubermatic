@@ -40,6 +40,7 @@ require (
 	github.com/gorilla/mux v1.8.0
 	github.com/gorilla/securecookie v1.1.1
 	github.com/gorilla/websocket v1.4.2
+	github.com/grafana-tools/sdk v0.0.0-20210301100910-d23004341fc8
 	github.com/hashicorp/go-multierror v1.1.0
 	github.com/hetznercloud/hcloud-go v1.23.1
 	github.com/huandu/xstrings v1.3.2 // indirect
