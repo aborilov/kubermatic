@@ -39,14 +39,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
-const (
-	ControllerName = "kubermatic_mla_controller"
-
-	mlaFinalizer = "kubermatic.io/mla"
-)
-
-// Reconciler stores necessary components that are required to manage MLA(Monitoring, Logging, and Alerting) setup.
-type Reconciler struct {
+// projectReconciler stores necessary components that are required to manage MLA(Monitoring, Logging, and Alerting) setup.
+type projectReconciler struct {
 	ctrlruntimeclient.Client
 	grafanaClient *grafanasdk.Client
 
@@ -58,20 +52,18 @@ type Reconciler struct {
 
 // Add creates a new MLA controller that is responsible for
 // managing Monitoring, Logging and Alerting for user clusters.
-func Add(
+func newProjectReconciler(
 	mgr manager.Manager,
 	log *zap.SugaredLogger,
 	numWorkers int,
 	workerName string,
 	versions kubermatic.Versions,
-	grafanaURL string,
+	grafanaClient *grafanasdk.Client,
 ) error {
 	log = log.Named(ControllerName)
 	client := mgr.GetClient()
 
-	grafanaClient := grafanasdk.NewClient(grafanaURL, "admin:admin", grafanasdk.DefaultHTTPClient)
-
-	reconciler := &Reconciler{
+	reconciler := &projectReconciler{
 		Client:        client,
 		grafanaClient: grafanaClient,
 
@@ -98,7 +90,7 @@ func Add(
 	return err
 }
 
-func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+func (r *projectReconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log := r.log.With("request", request)
 	log.Debug("Processing")
 
@@ -107,7 +99,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, ctrlruntimeclient.IgnoreNotFound(err)
 	}
 
-	// Handle the deletion of the Catalog object.
 	if !project.DeletionTimestamp.IsZero() {
 		if err := r.handleDeletion(ctx, project); err != nil {
 			return reconcile.Result{}, fmt.Errorf("handling deletion: %w", err)
@@ -121,7 +112,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	org := grafanasdk.Org{
-		Name: fmt.Sprintf("%s-%s", project.Spec.Name, project.Name),
+		Name: getOrgNameForProject(project),
 	}
 
 	_, err := r.grafanaClient.CreateOrg(ctx, org)
@@ -132,8 +123,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	return reconcile.Result{}, nil
 }
 
-func (r *Reconciler) handleDeletion(ctx context.Context, project *kubermaticv1.Project) error {
-	org, err := r.grafanaClient.GetOrgByOrgName(ctx, fmt.Sprintf("%s-%s", project.Spec.Name, project.Name))
+func (r *projectReconciler) handleDeletion(ctx context.Context, project *kubermaticv1.Project) error {
+	org, err := r.grafanaClient.GetOrgByOrgName(ctx, getOrgNameForProject(project))
 	if err != nil {
 		return err
 	}
