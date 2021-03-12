@@ -19,9 +19,11 @@ package mla
 import (
 	"fmt"
 
+	"github.com/grafana/grafana/pkg/models"
+	"k8c.io/kubermatic/v2/pkg/controller/master-controller-manager/rbac"
 	kubermaticv1 "k8c.io/kubermatic/v2/pkg/crd/kubermatic/v1"
 
-	grafanasdk "github.com/grafana-tools/sdk"
+	grafanasdk "github.com/aborilov/sdk"
 	"go.uber.org/zap"
 	"k8c.io/kubermatic/v2/pkg/version/kubermatic"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -30,7 +32,17 @@ import (
 const (
 	ControllerName = "kubermatic_mla_controller"
 
+	defaultOrgID = 1
 	mlaFinalizer = "kubermatic.io/mla"
+)
+
+var (
+	// groupToRoleMap map kubermatic groups to grafana roles
+	groupToRoleMap = map[string]models.RoleType{
+		rbac.OwnerGroupNamePrefix:  models.ROLE_ADMIN,
+		rbac.EditorGroupNamePrefix: models.ROLE_EDITOR,
+		rbac.ViewerGroupNamePrefix: models.ROLE_VIEWER,
+	}
 )
 
 // Add creates a new MLA controller that is responsible for
@@ -47,7 +59,7 @@ func Add(
 	if err := newProjectReconciler(mgr, log, numWorkers, workerName, versions, grafanaClient); err != nil {
 		return fmt.Errorf("failed to create mla project controller: %v", err)
 	}
-	if err := newUserProjectBindingReconciler(mgr, log, numWorkers, workerName, versions, grafanaClient); err != nil {
+	if err := newUserProjectBindingReconciler(mgr, log, numWorkers, workerName, versions, grafanaClient, grafanaURL); err != nil {
 		return fmt.Errorf("failed to create mla userprojectbinding controller: %v", err)
 	}
 	return nil

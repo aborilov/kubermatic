@@ -24,7 +24,7 @@ import (
 
 	"k8c.io/kubermatic/v2/pkg/kubernetes"
 
-	grafanasdk "github.com/grafana-tools/sdk"
+	grafanasdk "github.com/aborilov/sdk"
 	"go.uber.org/zap"
 
 	kubermaticv1 "k8c.io/kubermatic/v2/pkg/crd/kubermatic/v1"

@@ -18,15 +18,18 @@ package mla
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 
 	"k8s.io/apimachinery/pkg/types"
 
+	"k8c.io/kubermatic/v2/pkg/controller/master-controller-manager/rbac"
 	"k8c.io/kubermatic/v2/pkg/controller/util/predicate"
 
 	"k8c.io/kubermatic/v2/pkg/kubernetes"
 
-	grafanasdk "github.com/grafana-tools/sdk"
+	grafanasdk "github.com/aborilov/sdk"
 	"go.uber.org/zap"
 
 	kubermaticv1 "k8c.io/kubermatic/v2/pkg/crd/kubermatic/v1"
@@ -50,6 +53,7 @@ type userProjectBindingReconciler struct {
 	workerName string
 	recorder   record.EventRecorder
 	versions   kubermatic.Versions
+	grafanaURL string
 }
 
 // Add creates a new MLA controller that is responsible for
@@ -61,6 +65,7 @@ func newUserProjectBindingReconciler(
 	workerName string,
 	versions kubermatic.Versions,
 	grafanaClient *grafanasdk.Client,
+	grafanaURL string,
 ) error {
 	log = log.Named(ControllerName)
 	client := mgr.GetClient()
@@ -73,6 +78,7 @@ func newUserProjectBindingReconciler(
 		workerName: workerName,
 		recorder:   mgr.GetEventRecorderFor(ControllerName),
 		versions:   versions,
+		grafanaURL: grafanaURL,
 	}
 
 	ctrlOptions := controller.Options{
@@ -125,17 +131,33 @@ func (r *userProjectBindingReconciler) Reconcile(ctx context.Context, request re
 		return reconcile.Result{}, err
 	}
 
-	globalUser := grafanasdk.User{
-		Login:    userProjectBinding.Spec.UserEmail,
-		Name:     userProjectBinding.Spec.UserEmail,
-		Email:    userProjectBinding.Spec.UserEmail,
-		Password: "password",
-		OrgID:    org.ID,
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", r.grafanaURL+"/api/user", nil)
+	req.Header.Add("X-WEBAUTH-USER", userProjectBinding.Spec.UserEmail)
+	resp, err := client.Do(req)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	type response struct {
+		ID uint `json:"id"`
+	}
+	rr := &response{}
+	decoder := json.NewDecoder(resp.Body)
+	if err := decoder.Decode(rr); err != nil || rr.ID == 0 {
+		return reconcile.Result{}, fmt.Errorf("unable to decode responce : %w", err)
 	}
 
-	_, err = r.grafanaClient.CreateUser(ctx, globalUser)
-	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to create grafana user: %w", err)
+	group := rbac.ExtractGroupPrefix(userProjectBinding.Spec.Group)
+	role := groupToRoleMap[group]
+	userRole := grafanasdk.UserRole{
+		LoginOrEmail: userProjectBinding.Spec.UserEmail,
+		Role:         string(role),
+	}
+	if _, err := r.grafanaClient.AddOrgUser(ctx, userRole, org.ID); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to add grafana user to org: %w", err)
+	}
+	if _, err := r.grafanaClient.DeleteOrgUser(ctx, defaultOrgID, rr.ID); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to delete grafana user from default org: %w", err)
 	}
 
 	return reconcile.Result{}, nil

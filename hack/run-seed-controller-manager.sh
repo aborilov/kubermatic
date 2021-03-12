@@ -83,6 +83,6 @@ set -x
   -log-format=Console \
   -max-parallel-reconcile=10 \
   -pprof-listen-address=":${PPROF_PORT}" \
-  -grafana-url="http://a71fcd9b750e344329722e806d32318b-380644496.eu-central-1.elb.amazonaws.com"
+  -grafana-url="http://aa48627fabf58473caf0592112c7ff95-1872816067.eu-central-1.elb.amazonaws.com"
   -logtostderr \
   -v=4 # Log-level for the Kube dependencies. Increase up to 9 to get request-level logs.
