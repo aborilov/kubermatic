@@ -15,6 +15,7 @@ require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.751
 	github.com/apoydence/onpar v0.0.0-20200406201722-06f95a1c68e8 // indirect
 	github.com/aws/aws-sdk-go v1.36.2
+	github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869 // indirect
 	github.com/coreos/go-oidc v2.2.1+incompatible
 	github.com/coreos/locksmith v0.6.2
 	github.com/cristim/ec2-instances-info v0.0.0-20201110114654-2dfcc09f67d4
@@ -44,6 +45,7 @@ require (
 	github.com/gorilla/mux v1.8.0
 	github.com/gorilla/securecookie v1.1.1
 	github.com/gorilla/websocket v1.4.2
+	github.com/grafana-tools/sdk v0.0.0-20210310213032-c3f3511b3e9b // indirect
 	github.com/grafana/grafana v6.1.6+incompatible
 	github.com/hashicorp/go-multierror v1.1.0
 	github.com/hetznercloud/hcloud-go v1.23.1
