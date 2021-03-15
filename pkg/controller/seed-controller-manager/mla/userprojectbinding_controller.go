@@ -119,45 +119,30 @@ func (r *userProjectBindingReconciler) Reconcile(ctx context.Context, request re
 		return reconcile.Result{}, fmt.Errorf("updating finalizers: %w", err)
 	}
 
-	project := &kubermaticv1.Project{}
-	if err := r.Get(ctx, types.NamespacedName{
-		Name: userProjectBinding.Spec.ProjectID,
-	}, project); err != nil {
-		return reconcile.Result{}, fmt.Errorf("faileding to get project: %w", err)
-	}
-
-	org, err := r.grafanaClient.GetOrgByOrgName(ctx, getOrgNameForProject(project))
+	// checking if user already exists corresponding organization
+	user, err := r.getGrafanaOrgUser(ctx, userProjectBinding)
 	if err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{}, fmt.Errorf("unable to get user : %w", err)
 	}
-
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", r.grafanaURL+"/api/user", nil)
-	req.Header.Add("X-WEBAUTH-USER", userProjectBinding.Spec.UserEmail)
-	resp, err := client.Do(req)
-	if err != nil {
-		return reconcile.Result{}, err
-	}
-	type response struct {
-		ID uint `json:"id"`
-	}
-	rr := &response{}
-	decoder := json.NewDecoder(resp.Body)
-	if err := decoder.Decode(rr); err != nil || rr.ID == 0 {
-		return reconcile.Result{}, fmt.Errorf("unable to decode responce : %w", err)
+	// if there is no such user in project organization, let's create one
+	if user == nil {
+		if _, err := r.addGrafanaUser(ctx, userProjectBinding); err != nil {
+			return reconcile.Result{}, fmt.Errorf("unable to add grafana user : %w", err)
+		}
+		return reconcile.Result{}, nil
 	}
 
 	group := rbac.ExtractGroupPrefix(userProjectBinding.Spec.Group)
 	role := groupToRoleMap[group]
-	userRole := grafanasdk.UserRole{
-		LoginOrEmail: userProjectBinding.Spec.UserEmail,
-		Role:         string(role),
-	}
-	if _, err := r.grafanaClient.AddOrgUser(ctx, userRole, org.ID); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to add grafana user to org: %w", err)
-	}
-	if _, err := r.grafanaClient.DeleteOrgUser(ctx, defaultOrgID, rr.ID); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to delete grafana user from default org: %w", err)
+
+	if user.Role != string(role) {
+		userRole := grafanasdk.UserRole{
+			LoginOrEmail: userProjectBinding.Spec.UserEmail,
+			Role:         string(role),
+		}
+		if _, err := r.grafanaClient.UpdateOrgUser(ctx, userRole, user.OrgId, user.ID); err != nil {
+			return reconcile.Result{}, fmt.Errorf("unable to upate grafana user role: %w", err)
+		}
 	}
 
 	return reconcile.Result{}, nil
@@ -196,4 +181,80 @@ func (r *userProjectBindingReconciler) handleDeletion(ctx context.Context, userP
 	}
 
 	return nil
+}
+
+func (r *userProjectBindingReconciler) getGrafanaOrgUser(ctx context.Context, userProjectBinding *kubermaticv1.UserProjectBinding) (*grafanasdk.OrgUser, error) {
+	project := &kubermaticv1.Project{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name: userProjectBinding.Spec.ProjectID,
+	}, project); err != nil {
+		return nil, fmt.Errorf("faileding to get project: %w", err)
+	}
+
+	org, err := r.grafanaClient.GetOrgByOrgName(ctx, getOrgNameForProject(project))
+	if err != nil {
+		return nil, err
+	}
+
+	users, err := r.grafanaClient.GetOrgUsers(ctx, org.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, user := range users {
+		if user.Email == userProjectBinding.Spec.UserEmail {
+			return &user, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *userProjectBindingReconciler) addGrafanaUser(ctx context.Context, userProjectBinding *kubermaticv1.UserProjectBinding) (*grafanasdk.OrgUser, error) {
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", r.grafanaURL+"/api/user", nil)
+	req.Header.Add("X-WEBAUTH-USER", userProjectBinding.Spec.UserEmail)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	type response struct {
+		ID uint `json:"id"`
+	}
+	res := &response{}
+	decoder := json.NewDecoder(resp.Body)
+	if err := decoder.Decode(res); err != nil || res.ID == 0 {
+		return nil, fmt.Errorf("unable to decode responce : %w", err)
+	}
+	if _, err := r.grafanaClient.DeleteOrgUser(ctx, defaultOrgID, res.ID); err != nil {
+		return nil, fmt.Errorf("failed to delete grafana user from default org: %w", err)
+	}
+
+	project := &kubermaticv1.Project{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name: userProjectBinding.Spec.ProjectID,
+	}, project); err != nil {
+		return nil, fmt.Errorf("faileding to get project: %w", err)
+	}
+
+	org, err := r.grafanaClient.GetOrgByOrgName(ctx, getOrgNameForProject(project))
+	if err != nil {
+		return nil, err
+	}
+
+	group := rbac.ExtractGroupPrefix(userProjectBinding.Spec.Group)
+	role := groupToRoleMap[group]
+	userRole := grafanasdk.UserRole{
+		LoginOrEmail: userProjectBinding.Spec.UserEmail,
+		Role:         string(role),
+	}
+	if _, err := r.grafanaClient.AddOrgUser(ctx, userRole, org.ID); err != nil {
+		return nil, fmt.Errorf("failed to add grafana user to org: %w", err)
+	}
+	return &grafanasdk.OrgUser{
+		ID:    res.ID,
+		OrgId: org.ID,
+		Email: userProjectBinding.Spec.UserEmail,
+		Login: userProjectBinding.Spec.UserEmail,
+		Role:  string(role),
+	}, nil
 }
