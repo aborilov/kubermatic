@@ -37,8 +37,8 @@ const (
 )
 
 var (
-	// groupToRoleMap map kubermatic groups to grafana roles
-	groupToRoleMap = map[string]models.RoleType{
+	// groupToRole map kubermatic groups to grafana roles
+	groupToRole = map[string]models.RoleType{
 		rbac.OwnerGroupNamePrefix:  models.ROLE_ADMIN,
 		rbac.EditorGroupNamePrefix: models.ROLE_EDITOR,
 		rbac.ViewerGroupNamePrefix: models.ROLE_VIEWER,
@@ -54,12 +54,13 @@ func Add(
 	workerName string,
 	versions kubermatic.Versions,
 	grafanaURL string,
+	grafanaHeader string,
 ) error {
 	grafanaClient := grafanasdk.NewClient(grafanaURL, "admin:admin", grafanasdk.DefaultHTTPClient)
 	if err := newProjectReconciler(mgr, log, numWorkers, workerName, versions, grafanaClient); err != nil {
 		return fmt.Errorf("failed to create mla project controller: %v", err)
 	}
-	if err := newUserProjectBindingReconciler(mgr, log, numWorkers, workerName, versions, grafanaClient, grafanaURL); err != nil {
+	if err := newUserProjectBindingReconciler(mgr, log, numWorkers, workerName, versions, grafanaClient, grafanaURL, grafanaHeader); err != nil {
 		return fmt.Errorf("failed to create mla userprojectbinding controller: %v", err)
 	}
 	return nil

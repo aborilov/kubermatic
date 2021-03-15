@@ -101,7 +101,8 @@ type controllerRunOptions struct {
 	featureGates features.FeatureGate
 
 	// MLA configuration
-	grafanaURL string
+	grafanaURL        string
+	grafanaHeaderName string
 }
 
 func newControllerRunOptions() (controllerRunOptions, error) {
@@ -164,6 +165,7 @@ func newControllerRunOptions() (controllerRunOptions, error) {
 	flag.StringVar(&caBundleFile, "ca-bundle", "", "File containing the PEM-encoded CA bundle for all userclusters")
 	flag.Var(&c.tunnelingAgentIP, "tunneling-agent-ip", "The address used by the tunneling agents.")
 	flag.StringVar(&c.grafanaURL, "grafana-url", "http://grafana.mla.svc.cluster.local", "The URL of Grafana instance which in running for MLA stack.")
+	flag.StringVar(&c.grafanaHeaderName, "grafana-header-name", "X-WEBAUTH-USER", "Grafana Auth Proxy HTTP Header that will contain the username or email")
 	c.admissionWebhook.AddFlags(flag.CommandLine, true)
 	addFlags(flag.CommandLine)
 	flag.Parse()

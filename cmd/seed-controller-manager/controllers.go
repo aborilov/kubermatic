@@ -411,5 +411,6 @@ func createMLAController(ctrlCtx *controllerContext) error {
 		ctrlCtx.runOptions.workerName,
 		ctrlCtx.versions,
 		ctrlCtx.runOptions.grafanaURL,
+		ctrlCtx.runOptions.grafanaHeaderName,
 	)
 }

@@ -49,11 +49,12 @@ type userProjectBindingReconciler struct {
 	ctrlruntimeclient.Client
 	grafanaClient *grafanasdk.Client
 
-	log        *zap.SugaredLogger
-	workerName string
-	recorder   record.EventRecorder
-	versions   kubermatic.Versions
-	grafanaURL string
+	log           *zap.SugaredLogger
+	workerName    string
+	recorder      record.EventRecorder
+	versions      kubermatic.Versions
+	grafanaURL    string
+	grafanaHeader string
 }
 
 // Add creates a new MLA controller that is responsible for
@@ -66,6 +67,7 @@ func newUserProjectBindingReconciler(
 	versions kubermatic.Versions,
 	grafanaClient *grafanasdk.Client,
 	grafanaURL string,
+	grafanaHeader string,
 ) error {
 	log = log.Named(ControllerName)
 	client := mgr.GetClient()
@@ -74,11 +76,12 @@ func newUserProjectBindingReconciler(
 		Client:        client,
 		grafanaClient: grafanaClient,
 
-		log:        log,
-		workerName: workerName,
-		recorder:   mgr.GetEventRecorderFor(ControllerName),
-		versions:   versions,
-		grafanaURL: grafanaURL,
+		log:           log,
+		workerName:    workerName,
+		recorder:      mgr.GetEventRecorderFor(ControllerName),
+		versions:      versions,
+		grafanaURL:    grafanaURL,
+		grafanaHeader: grafanaHeader,
 	}
 
 	ctrlOptions := controller.Options{
@@ -126,14 +129,14 @@ func (r *userProjectBindingReconciler) Reconcile(ctx context.Context, request re
 	}
 	// if there is no such user in project organization, let's create one
 	if user == nil {
-		if _, err := r.addGrafanaUser(ctx, userProjectBinding); err != nil {
+		if _, err := r.addGrafanaOrgUser(ctx, userProjectBinding); err != nil {
 			return reconcile.Result{}, fmt.Errorf("unable to add grafana user : %w", err)
 		}
 		return reconcile.Result{}, nil
 	}
 
 	group := rbac.ExtractGroupPrefix(userProjectBinding.Spec.Group)
-	role := groupToRoleMap[group]
+	role := groupToRole[group]
 
 	if user.Role != string(role) {
 		userRole := grafanasdk.UserRole{
@@ -209,10 +212,10 @@ func (r *userProjectBindingReconciler) getGrafanaOrgUser(ctx context.Context, us
 	return nil, nil
 }
 
-func (r *userProjectBindingReconciler) addGrafanaUser(ctx context.Context, userProjectBinding *kubermaticv1.UserProjectBinding) (*grafanasdk.OrgUser, error) {
+func (r *userProjectBindingReconciler) addGrafanaOrgUser(ctx context.Context, userProjectBinding *kubermaticv1.UserProjectBinding) (*grafanasdk.OrgUser, error) {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", r.grafanaURL+"/api/user", nil)
-	req.Header.Add("X-WEBAUTH-USER", userProjectBinding.Spec.UserEmail)
+	req.Header.Add(r.grafanaHeader, userProjectBinding.Spec.UserEmail)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -242,7 +245,7 @@ func (r *userProjectBindingReconciler) addGrafanaUser(ctx context.Context, userP
 	}
 
 	group := rbac.ExtractGroupPrefix(userProjectBinding.Spec.Group)
-	role := groupToRoleMap[group]
+	role := groupToRole[group]
 	userRole := grafanasdk.UserRole{
 		LoginOrEmail: userProjectBinding.Spec.UserEmail,
 		Role:         string(role),
