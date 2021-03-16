@@ -60,6 +60,9 @@ func Add(
 	if err := newProjectReconciler(mgr, log, numWorkers, workerName, versions, grafanaClient); err != nil {
 		return fmt.Errorf("failed to create mla project controller: %v", err)
 	}
+	if err := newClusterReconciler(mgr, log, numWorkers, workerName, versions); err != nil {
+		return fmt.Errorf("failed to create mla cluster controller: %v", err)
+	}
 	if err := newUserProjectBindingReconciler(mgr, log, numWorkers, workerName, versions, grafanaClient, grafanaURL, grafanaHeader); err != nil {
 		return fmt.Errorf("failed to create mla userprojectbinding controller: %v", err)
 	}
