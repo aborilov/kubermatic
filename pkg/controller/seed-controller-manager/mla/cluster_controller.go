@@ -23,18 +23,21 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/Masterminds/sprig/v3"
 	"k8c.io/kubermatic/v2/pkg/controller/operator/common"
 	"k8c.io/kubermatic/v2/pkg/controller/util/predicate"
+	kubermaticapiv1 "k8c.io/kubermatic/v2/pkg/crd/kubermatic/v1"
 	kubermaticv1 "k8c.io/kubermatic/v2/pkg/crd/kubermatic/v1"
 	"k8c.io/kubermatic/v2/pkg/kubernetes"
 	"k8c.io/kubermatic/v2/pkg/resources"
 	"k8c.io/kubermatic/v2/pkg/resources/reconciling"
 	"k8c.io/kubermatic/v2/pkg/version/kubermatic"
 
+	"github.com/Masterminds/sprig/v3"
+	grafanasdk "github.com/aborilov/sdk"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/pointer"
@@ -51,6 +54,7 @@ import (
 // clusterReconciler stores necessary components that are required to manage MLA(Monitoring, Logging, and Alerting) setup.
 type clusterReconciler struct {
 	ctrlruntimeclient.Client
+	grafanaClient *grafanasdk.Client
 
 	log        *zap.SugaredLogger
 	workerName string
@@ -64,12 +68,14 @@ func newClusterReconciler(
 	numWorkers int,
 	workerName string,
 	versions kubermatic.Versions,
+	grafanaClient *grafanasdk.Client,
 ) error {
 	log = log.Named(ControllerName)
 	client := mgr.GetClient()
 
 	reconciler := &clusterReconciler{
-		Client: client,
+		Client:        client,
+		grafanaClient: grafanaClient,
 
 		log:        log,
 		workerName: workerName,
@@ -114,21 +120,52 @@ func (r *clusterReconciler) Reconcile(ctx context.Context, request reconcile.Req
 	if err := r.Update(ctx, cluster); err != nil {
 		return reconcile.Result{}, fmt.Errorf("updating finalizers: %w", err)
 	}
-	log.Debug("creating gateway configmap")
 	if err := r.ensureConfigMaps(ctx, cluster); err != nil {
-		log.Errorf("error while creating configmap: %v", err)
 		return reconcile.Result{}, fmt.Errorf("failed to reconcile ConfigMaps in namespace %s: %v", cluster.Status.NamespaceName, err)
 	}
 
-	log.Debug("creating gateway deployment")
 	if err := r.ensureDeployments(ctx, cluster); err != nil {
-		log.Errorf("error while creating deployment: %v", err)
 		return reconcile.Result{}, fmt.Errorf("failed to reconcile Deployments in namespace %s: %v", cluster.Status.NamespaceName, err)
 	}
-	log.Debug("creating gateway services")
 	if err := r.ensureServices(ctx, cluster); err != nil {
-		log.Errorf("error while creating services: %v", err)
 		return reconcile.Result{}, fmt.Errorf("failed to reconcile Services in namespace %s: %v", "mla", err)
+	}
+
+	projectID, ok := cluster.GetLabels()[kubermaticapiv1.ProjectIDLabelKey]
+	if !ok {
+		return reconcile.Result{}, fmt.Errorf("unable to get project name from label")
+	}
+
+	project := &kubermaticv1.Project{}
+	if err := r.Get(ctx, types.NamespacedName{Name: projectID}, project); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get project: %w", err)
+	}
+
+	org, err := r.grafanaClient.GetOrgByOrgName(ctx, getOrgNameForProject(project))
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	lokiDS := grafanasdk.Datasource{
+		OrgID:  org.ID,
+		Name:   "Loki",
+		Type:   "loki",
+		Access: "proxy",
+		URL:    fmt.Sprintf("http://mla-gateway.%s.svc.cluster.local", cluster.Status.NamespaceName),
+	}
+	if status, err := r.grafanaClient.CreateDatasource(ctx, lokiDS); err != nil {
+		return reconcile.Result{}, fmt.Errorf("unable to add loki datasource: %w (status: %s, message: %s)",
+			err, pointer.StringPtrDerefOr(status.Status, "no status"), pointer.StringPtrDerefOr(status.Message, "no message"))
+	}
+	prometheusDS := grafanasdk.Datasource{
+		OrgID:  org.ID,
+		Name:   "Prometheus",
+		Type:   "prometheus",
+		Access: "proxy",
+		URL:    fmt.Sprintf("http://mla-gateway.%s.svc.cluster.local/api/prom", cluster.Status.NamespaceName),
+	}
+	if status, err := r.grafanaClient.CreateDatasource(ctx, prometheusDS); err != nil {
+		return reconcile.Result{}, fmt.Errorf("unable to add prometheus datasource: %w (status: %s, message: %s)",
+			err, pointer.StringPtrDerefOr(status.Status, "no status"), pointer.StringPtrDerefOr(status.Message, "no message"))
 	}
 
 	return reconcile.Result{}, nil
@@ -153,19 +190,18 @@ func (r *clusterReconciler) ensureConfigMaps(ctx context.Context, c *kubermaticv
 	return nil
 }
 
-func (r *clusterReconciler) ensureServices(ctx context.Context, cluster *kubermaticv1.Cluster) error {
+func (r *clusterReconciler) ensureServices(ctx context.Context, c *kubermaticv1.Cluster) error {
 	creators := []reconciling.NamedServiceCreatorGetter{
 		GatewayAlertServiceCreator(),
 		GatewayInternalServiceCreator(),
 		GatewayExternalServiceCreator(),
 	}
-	return reconciling.ReconcileServices(ctx, creators, cluster.Status.NamespaceName, r.Client, reconciling.OwnerRefWrapper(resources.GetClusterRef(cluster)))
+	return reconciling.ReconcileServices(ctx, creators, c.Status.NamespaceName, r.Client, reconciling.OwnerRefWrapper(resources.GetClusterRef(c)))
 }
 
 func GatewayAlertServiceCreator() reconciling.NamedServiceCreatorGetter {
 	return func() (string, reconciling.ServiceCreator) {
-		return "mla-gateway", func(s *corev1.Service) (*corev1.Service, error) {
-			s.SetName("mla-gateway-alert")
+		return "mla-gateway-alert", func(s *corev1.Service) (*corev1.Service, error) {
 			s.Spec.Type = corev1.ServiceTypeLoadBalancer
 			s.Spec.Ports = []corev1.ServicePort{
 				{
@@ -183,7 +219,6 @@ func GatewayAlertServiceCreator() reconciling.NamedServiceCreatorGetter {
 func GatewayInternalServiceCreator() reconciling.NamedServiceCreatorGetter {
 	return func() (string, reconciling.ServiceCreator) {
 		return "mla-gateway", func(s *corev1.Service) (*corev1.Service, error) {
-			s.SetName("mla-gateway")
 			s.Spec.Type = corev1.ServiceTypeClusterIP
 			s.Spec.Ports = []corev1.ServicePort{
 				{
@@ -200,8 +235,7 @@ func GatewayInternalServiceCreator() reconciling.NamedServiceCreatorGetter {
 
 func GatewayExternalServiceCreator() reconciling.NamedServiceCreatorGetter {
 	return func() (string, reconciling.ServiceCreator) {
-		return "mla-gateway", func(s *corev1.Service) (*corev1.Service, error) {
-			s.SetName("mla-gateway-ext")
+		return "mla-gateway-ext", func(s *corev1.Service) (*corev1.Service, error) {
 			s.Spec.Type = corev1.ServiceTypeClusterIP
 			s.Spec.Ports = []corev1.ServicePort{
 				{
@@ -258,12 +292,16 @@ func GatewayDeploymentCreator() reconciling.NamedDeploymentCreatorGetter {
 					ReadinessProbe: &corev1.Probe{
 						Handler: corev1.Handler{
 							HTTPGet: &corev1.HTTPGetAction{
-								Path: "/",
-								Port: intstr.FromString("http-int"),
+								Path:   "/",
+								Port:   intstr.FromString("http-int"),
+								Scheme: corev1.URISchemeHTTP,
 							},
 						},
 						InitialDelaySeconds: 15,
 						TimeoutSeconds:      1,
+						PeriodSeconds:       10,
+						SuccessThreshold:    1,
+						FailureThreshold:    3,
 					},
 					SecurityContext: &corev1.SecurityContext{
 						Capabilities: &corev1.Capabilities{
