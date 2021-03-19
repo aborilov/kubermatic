@@ -118,9 +118,11 @@ func (r *userProjectBindingReconciler) Reconcile(ctx context.Context, request re
 		return reconcile.Result{}, nil
 	}
 
-	kubernetes.AddFinalizer(userProjectBinding, mlaFinalizer)
-	if err := r.Update(ctx, userProjectBinding); err != nil {
-		return reconcile.Result{}, fmt.Errorf("updating finalizers: %w", err)
+	if !kubernetes.HasFinalizer(userProjectBinding, mlaFinalizer) {
+		kubernetes.AddFinalizer(userProjectBinding, mlaFinalizer)
+		if err := r.Update(ctx, userProjectBinding); err != nil {
+			return reconcile.Result{}, fmt.Errorf("updating finalizers: %w", err)
+		}
 	}
 
 	// checking if user already exists corresponding organization

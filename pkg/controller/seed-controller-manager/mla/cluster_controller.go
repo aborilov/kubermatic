@@ -17,13 +17,9 @@ limitations under the License.
 package mla
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"strings"
-	"text/template"
 
-	"k8c.io/kubermatic/v2/pkg/controller/operator/common"
 	"k8c.io/kubermatic/v2/pkg/controller/util/predicate"
 	kubermaticapiv1 "k8c.io/kubermatic/v2/pkg/crd/kubermatic/v1"
 	kubermaticv1 "k8c.io/kubermatic/v2/pkg/crd/kubermatic/v1"
@@ -32,13 +28,8 @@ import (
 	"k8c.io/kubermatic/v2/pkg/resources/reconciling"
 	"k8c.io/kubermatic/v2/pkg/version/kubermatic"
 
-	"github.com/Masterminds/sprig/v3"
 	grafanasdk "github.com/aborilov/sdk"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/pointer"
 
@@ -116,9 +107,11 @@ func (r *clusterReconciler) Reconcile(ctx context.Context, request reconcile.Req
 		return reconcile.Result{}, nil
 	}
 
-	kubernetes.AddFinalizer(cluster, mlaFinalizer)
-	if err := r.Update(ctx, cluster); err != nil {
-		return reconcile.Result{}, fmt.Errorf("updating finalizers: %w", err)
+	if !kubernetes.HasFinalizer(cluster, mlaFinalizer) {
+		kubernetes.AddFinalizer(cluster, mlaFinalizer)
+		if err := r.Update(ctx, cluster); err != nil {
+			return reconcile.Result{}, fmt.Errorf("updating finalizers: %w", err)
+		}
 	}
 	if err := r.ensureConfigMaps(ctx, cluster); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to reconcile ConfigMaps in namespace %s: %v", cluster.Status.NamespaceName, err)
@@ -147,7 +140,7 @@ func (r *clusterReconciler) Reconcile(ctx context.Context, request reconcile.Req
 	}
 	lokiDS := grafanasdk.Datasource{
 		OrgID:  org.ID,
-		Name:   "Loki",
+		Name:   getLokiDatasourceNameForCluster(cluster),
 		Type:   "loki",
 		Access: "proxy",
 		URL:    fmt.Sprintf("http://mla-gateway.%s.svc.cluster.local", cluster.Status.NamespaceName),
@@ -158,7 +151,7 @@ func (r *clusterReconciler) Reconcile(ctx context.Context, request reconcile.Req
 	}
 	prometheusDS := grafanasdk.Datasource{
 		OrgID:  org.ID,
-		Name:   "Prometheus",
+		Name:   getPrometheusDatasourceNameForCluster(cluster),
 		Type:   "prometheus",
 		Access: "proxy",
 		URL:    fmt.Sprintf("http://mla-gateway.%s.svc.cluster.local/api/prom", cluster.Status.NamespaceName),
@@ -199,291 +192,36 @@ func (r *clusterReconciler) ensureServices(ctx context.Context, c *kubermaticv1.
 	return reconciling.ReconcileServices(ctx, creators, c.Status.NamespaceName, r.Client, reconciling.OwnerRefWrapper(resources.GetClusterRef(c)))
 }
 
-func GatewayAlertServiceCreator() reconciling.NamedServiceCreatorGetter {
-	return func() (string, reconciling.ServiceCreator) {
-		return "mla-gateway-alert", func(s *corev1.Service) (*corev1.Service, error) {
-			s.Spec.Type = corev1.ServiceTypeLoadBalancer
-			s.Spec.Ports = []corev1.ServicePort{
-				{
-					Name:       "http-alert",
-					Protocol:   corev1.ProtocolTCP,
-					Port:       80,
-					TargetPort: intstr.FromString("http-alert"),
-				},
-			}
-			return s, nil
-		}
-	}
-}
-
-func GatewayInternalServiceCreator() reconciling.NamedServiceCreatorGetter {
-	return func() (string, reconciling.ServiceCreator) {
-		return "mla-gateway", func(s *corev1.Service) (*corev1.Service, error) {
-			s.Spec.Type = corev1.ServiceTypeClusterIP
-			s.Spec.Ports = []corev1.ServicePort{
-				{
-					Name:       "http-int",
-					Protocol:   corev1.ProtocolTCP,
-					Port:       80,
-					TargetPort: intstr.FromString("http-int"),
-				},
-			}
-			return s, nil
-		}
-	}
-}
-
-func GatewayExternalServiceCreator() reconciling.NamedServiceCreatorGetter {
-	return func() (string, reconciling.ServiceCreator) {
-		return "mla-gateway-ext", func(s *corev1.Service) (*corev1.Service, error) {
-			s.Spec.Type = corev1.ServiceTypeClusterIP
-			s.Spec.Ports = []corev1.ServicePort{
-				{
-					Name:       "http-ext",
-					Protocol:   corev1.ProtocolTCP,
-					Port:       80,
-					TargetPort: intstr.FromString("http-ext"),
-				},
-			}
-			return s, nil
-		}
-	}
-}
-
-func GatewayDeploymentCreator() reconciling.NamedDeploymentCreatorGetter {
-	return func() (string, reconciling.DeploymentCreator) {
-		return "mla-gateway", func(d *appsv1.Deployment) (*appsv1.Deployment, error) {
-			d.SetName("mla-gateway")
-			d.Spec.Replicas = pointer.Int32Ptr(1)
-			d.Spec.Selector = &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					common.NameLabel: "mla",
-				},
-			}
-			d.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
-				FSGroup:      pointer.Int64Ptr(1001),
-				RunAsGroup:   pointer.Int64Ptr(2001),
-				RunAsUser:    pointer.Int64Ptr(1001),
-				RunAsNonRoot: pointer.BoolPtr(true),
-			}
-			d.Spec.Template.Labels = d.Spec.Selector.MatchLabels
-			d.Spec.Template.Spec.Containers = []corev1.Container{
-				{
-					Name:            "nginx",
-					Image:           "docker.io/nginxinc/nginx-unprivileged:1.19-alpine",
-					ImagePullPolicy: corev1.PullIfNotPresent,
-					Ports: []corev1.ContainerPort{
-						{
-							Name:          "http-ext",
-							ContainerPort: 8080,
-							Protocol:      corev1.ProtocolTCP,
-						},
-						{
-							Name:          "http-int",
-							ContainerPort: 8081,
-							Protocol:      corev1.ProtocolTCP,
-						},
-						{
-							Name:          "http-alert",
-							ContainerPort: 8082,
-							Protocol:      corev1.ProtocolTCP,
-						},
-					},
-					ReadinessProbe: &corev1.Probe{
-						Handler: corev1.Handler{
-							HTTPGet: &corev1.HTTPGetAction{
-								Path:   "/",
-								Port:   intstr.FromString("http-int"),
-								Scheme: corev1.URISchemeHTTP,
-							},
-						},
-						InitialDelaySeconds: 15,
-						TimeoutSeconds:      1,
-						PeriodSeconds:       10,
-						SuccessThreshold:    1,
-						FailureThreshold:    3,
-					},
-					SecurityContext: &corev1.SecurityContext{
-						Capabilities: &corev1.Capabilities{
-							Drop: []corev1.Capability{"ALL"},
-						},
-						ReadOnlyRootFilesystem:   pointer.BoolPtr(true),
-						AllowPrivilegeEscalation: pointer.BoolPtr(false),
-					},
-					VolumeMounts: []corev1.VolumeMount{
-						{
-							Name:      "config",
-							MountPath: "/etc/nginx",
-						},
-						{
-							Name:      "tmp",
-							MountPath: "/tmp",
-						},
-						{
-							Name:      "docker-entrypoint-d-override",
-							MountPath: "/docker-entrypoint.d",
-						},
-					},
-				},
-			}
-			d.Spec.Template.Spec.Volumes = []corev1.Volume{
-				{
-					Name: "config",
-					VolumeSource: corev1.VolumeSource{
-						ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{
-								Name: "mla-gateway",
-							},
-						},
-					},
-				},
-				{
-					Name:         "tmp",
-					VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-				{
-					Name:         "docker-entrypoint-d-override",
-					VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-				},
-			}
-			return d, nil
-		}
-	}
-}
-
-const nginxConfig = `worker_processes  1;
-error_log  /dev/stderr;
-pid        /tmp/nginx.pid;
-worker_rlimit_nofile 8192;
-
-events {
-  worker_connections  1024;
-}
-
-http {
-  client_body_temp_path /tmp/client_temp;
-  proxy_temp_path       /tmp/proxy_temp_path;
-  fastcgi_temp_path     /tmp/fastcgi_temp;
-  uwsgi_temp_path       /tmp/uwsgi_temp;
-  scgi_temp_path        /tmp/scgi_temp;
-
-  default_type application/octet-stream;
-  log_format   main '$remote_addr - $remote_user [$time_local]  $status '
-	'"$request" $body_bytes_sent "$http_referer" '
-	'"$http_user_agent" "$http_x_forwarded_for" $http_x_scope_orgid';
-  access_log   /dev/stderr  main;
-  sendfile     on;
-  tcp_nopush   on;
-  resolver kube-dns.kube-system.svc.cluster.local;
-
-  # write path - exposed to user clusters
-  server {
-	listen             8080;
-	proxy_set_header X-Scope-OrgID {{ .TenantID}};
-
-	# Loki Config
-	location = /loki/api/v1/push {
-	  proxy_pass       http://loki-distributed-distributor.{{ .Namespace}}.svc.cluster.local:3100$request_uri;
-	}
-
-	# Cortex Config
-	location = /api/v1/push {
-	  proxy_pass      http://cortex-distributor.{{ .Namespace}}.svc.cluster.local:8080$request_uri;
-	}
-  }
-
-  # read path - cluster-local access only
-  server {
-	listen             8081;
-	proxy_set_header   X-Scope-OrgID {{ .TenantID}};
-
-	# k8s probes
-	location = / {
-	  return 200 'OK';
-	  auth_basic off;
-	}
-
-	# location = /api/prom/tail {
-	#   proxy_pass       http://loki-distributed-querier.{{ .Namespace}}.svc.cluster.local:3100$request_uri;
-	#   proxy_set_header Upgrade $http_upgrade;
-	#   proxy_set_header Connection "upgrade";
-	# }
-
-	# location = /loki/api/v1/tail {
-	#   proxy_pass       http://loki-distributed-querier.{{ .Namespace}}.svc.cluster.local:3100$request_uri;
-	#   proxy_set_header Upgrade $http_upgrade;
-	#   proxy_set_header Connection "upgrade";
-	# }
-
-	location ~ /loki/api/.* {
-	  proxy_pass       http://loki-distributed-query-frontend.{{ .Namespace}}.svc.cluster.local:3100$request_uri;
-	}
-
-	# Cortex Config
-	location ~ /api/prom/.* {
-	  proxy_pass       http://cortex-query-frontend.{{ .Namespace}}.svc.cluster.local:8080$request_uri;
-	}
-  }
-
-  # public read and write path - used for alertmanager only
-  server {
-	listen             8082;
-	proxy_set_header   X-Scope-OrgID {{ .TenantID}};
-
-	# Alertmanager Config
-	location ~ /api/prom/alertmanager.* {
-	  proxy_pass      http://cortex-alertmanager.{{ .Namespace}}.svc.cluster.local:8080$request_uri;
-	}
-	location ~ /api/v1/alerts {
-	  proxy_pass      http://cortex-alertmanager.{{ .Namespace}}.svc.cluster.local:8080$request_uri;
-	}
-	location ~ /multitenant_alertmanager/status {
-	  proxy_pass      http://cortex-alertmanager.{{ .Namespace}}.svc.cluster.local:8080$request_uri;
-	}
-  }
-}
-`
-
-type configTemplateData struct {
-	Namespace string
-	TenantID  string
-}
-
-func renderTemplate(tpl string, data interface{}) (string, error) {
-	t, err := template.New("base").Funcs(sprig.TxtFuncMap()).Parse(tpl)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse as Go template: %v", err)
-	}
-
-	output := bytes.Buffer{}
-	if err := t.Execute(&output, data); err != nil {
-		return "", fmt.Errorf("failed to render template: %v", err)
-	}
-
-	return strings.TrimSpace(output.String()), nil
-}
-
-func GatewayConfigMapCreator(c *kubermaticv1.Cluster) reconciling.NamedConfigMapCreatorGetter {
-	return func() (string, reconciling.ConfigMapCreator) {
-		return "mla-gateway", func(cm *corev1.ConfigMap) (*corev1.ConfigMap, error) {
-			if cm.Data == nil {
-				configData := configTemplateData{
-					Namespace: "mla",
-					TenantID:  c.Name,
-				}
-				config, err := renderTemplate(nginxConfig, configData)
-				if err != nil {
-					return nil, fmt.Errorf("failed to render Prometheus config: %v", err)
-				}
-
-				cm.Data = map[string]string{
-					"nginx.conf": config}
-			}
-			return cm, nil
-		}
-	}
-}
-
 func (r *clusterReconciler) handleDeletion(ctx context.Context, cluster *kubermaticv1.Cluster) error {
+	projectID, ok := cluster.GetLabels()[kubermaticapiv1.ProjectIDLabelKey]
+	if !ok {
+		return fmt.Errorf("unable to get project name from label")
+	}
+
+	project := &kubermaticv1.Project{}
+	if err := r.Get(ctx, types.NamespacedName{Name: projectID}, project); err != nil {
+		return fmt.Errorf("failed to get project: %w", err)
+	}
+
+	org, err := r.grafanaClient.GetOrgByOrgName(ctx, getOrgNameForProject(project))
+	if err != nil {
+		return err
+	}
+	if status, err := r.grafanaClient.SwitchActualUserContext(ctx, org.ID); err != nil {
+		return fmt.Errorf("unable to switch context to org %d: %w (status: %s, message: %s)",
+			org.ID, err, pointer.StringPtrDerefOr(status.Status, "no status"), pointer.StringPtrDerefOr(status.Message, "no message"))
+	}
+	fmt.Printf("delete %s\n", getPrometheusDatasourceNameForCluster(cluster))
+	if status, err := r.grafanaClient.DeleteDatasourceByName(ctx, getPrometheusDatasourceNameForCluster(cluster)); err != nil {
+		return fmt.Errorf("unable to delete datasource: %w (status: %s, message: %s)",
+			err, pointer.StringPtrDerefOr(status.Status, "no status"), pointer.StringPtrDerefOr(status.Message, "no message"))
+	}
+	fmt.Printf("delete %s\n", getLokiDatasourceNameForCluster(cluster))
+	if status, err := r.grafanaClient.DeleteDatasourceByName(ctx, getLokiDatasourceNameForCluster(cluster)); err != nil {
+		return fmt.Errorf("unable to delete datasource: %w (status: %s, message: %s)",
+			err, pointer.StringPtrDerefOr(status.Status, "no status"), pointer.StringPtrDerefOr(status.Message, "no message"))
+	}
+
 	kubernetes.RemoveFinalizer(cluster, mlaFinalizer)
 	if err := r.Update(ctx, cluster); err != nil {
 		return fmt.Errorf("updating Cluster: %w", err)

@@ -72,3 +72,11 @@ func Add(
 func getOrgNameForProject(project *kubermaticv1.Project) string {
 	return fmt.Sprintf("%s-%s", project.Spec.Name, project.Name)
 }
+
+func getLokiDatasourceNameForCluster(cluster *kubermaticv1.Cluster) string {
+	return fmt.Sprintf("Loki %s", cluster.Name)
+}
+
+func getPrometheusDatasourceNameForCluster(cluster *kubermaticv1.Cluster) string {
+	return fmt.Sprintf("Prometheus %s", cluster.Name)
+}
