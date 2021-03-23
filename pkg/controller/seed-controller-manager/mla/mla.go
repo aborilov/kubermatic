@@ -18,6 +18,7 @@ package mla
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/grafana/grafana/pkg/models"
 	"k8c.io/kubermatic/v2/pkg/controller/master-controller-manager/rbac"
@@ -63,7 +64,7 @@ func Add(
 	if err := newClusterReconciler(mgr, log, numWorkers, workerName, versions, grafanaClient); err != nil {
 		return fmt.Errorf("failed to create mla cluster controller: %v", err)
 	}
-	if err := newUserProjectBindingReconciler(mgr, log, numWorkers, workerName, versions, grafanaClient, grafanaURL, grafanaHeader); err != nil {
+	if err := newUserProjectBindingReconciler(mgr, log, numWorkers, workerName, versions, grafanaClient, &http.Client{}, grafanaURL, grafanaHeader); err != nil {
 		return fmt.Errorf("failed to create mla userprojectbinding controller: %v", err)
 	}
 	return nil
@@ -74,9 +75,9 @@ func getOrgNameForProject(project *kubermaticv1.Project) string {
 }
 
 func getLokiDatasourceNameForCluster(cluster *kubermaticv1.Cluster) string {
-	return fmt.Sprintf("Loki %s", cluster.Name)
+	return fmt.Sprintf("Loki %s", cluster.Spec.HumanReadableName)
 }
 
 func getPrometheusDatasourceNameForCluster(cluster *kubermaticv1.Cluster) string {
-	return fmt.Sprintf("Prometheus %s", cluster.Name)
+	return fmt.Sprintf("Prometheus %s", cluster.Spec.HumanReadableName)
 }

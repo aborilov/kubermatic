@@ -404,6 +404,9 @@ func createInitialMachineDeploymentController(ctrlCtx *controllerContext) error 
 }
 
 func createMLAController(ctrlCtx *controllerContext) error {
+	if !ctrlCtx.runOptions.featureGates.Enabled(features.MLAStack) {
+		return nil
+	}
 	return mla.Add(
 		ctrlCtx.mgr,
 		ctrlCtx.log,

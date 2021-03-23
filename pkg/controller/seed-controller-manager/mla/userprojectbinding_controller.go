@@ -49,6 +49,7 @@ import (
 type userProjectBindingReconciler struct {
 	ctrlruntimeclient.Client
 	grafanaClient *grafanasdk.Client
+	httpClient    *http.Client
 
 	log           *zap.SugaredLogger
 	workerName    string
@@ -67,6 +68,7 @@ func newUserProjectBindingReconciler(
 	workerName string,
 	versions kubermatic.Versions,
 	grafanaClient *grafanasdk.Client,
+	httpClient *http.Client,
 	grafanaURL string,
 	grafanaHeader string,
 ) error {
@@ -76,6 +78,7 @@ func newUserProjectBindingReconciler(
 	reconciler := &userProjectBindingReconciler{
 		Client:        client,
 		grafanaClient: grafanaClient,
+		httpClient:    httpClient,
 
 		log:           log,
 		workerName:    workerName,
@@ -202,10 +205,9 @@ func (r *userProjectBindingReconciler) getGrafanaOrgUser(ctx context.Context, us
 }
 
 func (r *userProjectBindingReconciler) addGrafanaOrgUser(ctx context.Context, userProjectBinding *kubermaticv1.UserProjectBinding) (*grafanasdk.OrgUser, error) {
-	client := &http.Client{}
 	req, err := http.NewRequest("GET", r.grafanaURL+"/api/user", nil)
 	req.Header.Add(r.grafanaHeader, userProjectBinding.Spec.UserEmail)
-	resp, err := client.Do(req)
+	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
