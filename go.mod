@@ -9,7 +9,7 @@ require (
 	github.com/Azure/go-autorest/autorest/azure/auth v0.5.8
 	github.com/Azure/go-autorest/autorest/to v0.4.0
 	github.com/Masterminds/semver/v3 v3.1.1
-	github.com/Masterminds/sprig/v3 v3.1.0
+	github.com/Masterminds/sprig/v3 v3.2.2
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.751
 	github.com/anexia-it/go-anxcloud v0.3.8
 	github.com/apoydence/onpar v0.0.0-20200406201722-06f95a1c68e8 // indirect
@@ -48,6 +48,7 @@ require (
 	github.com/jetstack/cert-manager v1.1.0
 	github.com/kubermatic/grafanasdk v0.9.10
 	github.com/kubermatic/machine-controller v1.35.2
+	github.com/kyma-incubator/reconciler v0.0.0-20210922074649-7d8d5ec9db98
 	github.com/minio/minio-go v6.0.14+incompatible
 	github.com/minio/minio-go/v7 v7.0.13
 	github.com/onsi/ginkgo v1.16.4
@@ -73,7 +74,7 @@ require (
 	golang.org/x/oauth2 v0.0.0-20210514164344-f6687ab2804c
 	golang.org/x/tools v0.1.2
 	gomodules.xyz/jsonpatch/v2 v2.2.0
-	google.golang.org/api v0.36.0
+	google.golang.org/api v0.44.0
 	google.golang.org/genproto v0.0.0-20210602131652-f16073e35f0c
 	google.golang.org/grpc v1.38.0
 	google.golang.org/protobuf v1.27.1

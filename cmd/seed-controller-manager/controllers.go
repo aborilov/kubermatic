@@ -33,6 +33,7 @@ import (
 	etcdrestorecontroller "k8c.io/kubermatic/v2/pkg/controller/seed-controller-manager/etcdrestore"
 	"k8c.io/kubermatic/v2/pkg/controller/seed-controller-manager/initialmachinedeployment"
 	kubernetescontroller "k8c.io/kubermatic/v2/pkg/controller/seed-controller-manager/kubernetes"
+	"k8c.io/kubermatic/v2/pkg/controller/seed-controller-manager/kyma"
 	"k8c.io/kubermatic/v2/pkg/controller/seed-controller-manager/mla"
 	"k8c.io/kubermatic/v2/pkg/controller/seed-controller-manager/monitoring"
 	"k8c.io/kubermatic/v2/pkg/controller/seed-controller-manager/pvwatcher"
@@ -52,23 +53,24 @@ import (
 // each entry holds the name of the controller and the corresponding
 // start function that will essentially run the controller
 var AllControllers = map[string]controllerCreator{
-	kubernetescontroller.ControllerName:           createKubernetesController,
-	updatecontroller.ControllerName:               createUpdateController,
-	addon.ControllerName:                          createAddonController,
-	addoninstaller.ControllerName:                 createAddonInstallerController,
-	etcdbackupcontroller.ControllerName:           createEtcdBackupController,
-	backupcontroller.ControllerName:               createBackupController,
-	etcdrestorecontroller.ControllerName:          createEtcdRestoreController,
-	monitoring.ControllerName:                     createMonitoringController,
-	cloudcontroller.ControllerName:                createCloudController,
-	seedresourcesuptodatecondition.ControllerName: createSeedConditionUpToDateController,
-	rancher.ControllerName:                        createRancherController,
-	pvwatcher.ControllerName:                      createPvWatcherController,
-	seedconstraintsynchronizer.ControllerName:     createConstraintController,
-	constrainttemplatecontroller.ControllerName:   createConstraintTemplateController,
-	initialmachinedeployment.ControllerName:       createInitialMachineDeploymentController,
-	mla.ControllerName:                            createMLAController,
-	clustertemplatecontroller.ControllerName:      createClusterTemplateController,
+	// kubernetescontroller.ControllerName:           createKubernetesController,
+	// updatecontroller.ControllerName:               createUpdateController,
+	// addon.ControllerName:                          createAddonController,
+	// addoninstaller.ControllerName:                 createAddonInstallerController,
+	// etcdbackupcontroller.ControllerName:           createEtcdBackupController,
+	// backupcontroller.ControllerName:               createBackupController,
+	// etcdrestorecontroller.ControllerName:          createEtcdRestoreController,
+	// monitoring.ControllerName:                     createMonitoringController,
+	// cloudcontroller.ControllerName:                createCloudController,
+	// seedresourcesuptodatecondition.ControllerName: createSeedConditionUpToDateController,
+	// rancher.ControllerName:                        createRancherController,
+	// pvwatcher.ControllerName:                      createPvWatcherController,
+	// seedconstraintsynchronizer.ControllerName:     createConstraintController,
+	// constrainttemplatecontroller.ControllerName:   createConstraintTemplateController,
+	// initialmachinedeployment.ControllerName:       createInitialMachineDeploymentController,
+	// mla.ControllerName:                            createMLAController,
+	kyma.ControllerName: createKymaController,
+	// clustertemplatecontroller.ControllerName:      createClusterTemplateController,
 }
 
 type controllerCreator func(*controllerContext) error
@@ -457,6 +459,17 @@ func createMLAController(ctrlCtx *controllerContext) error {
 		ctrlCtx.runOptions.cortexRulerURL,
 		ctrlCtx.runOptions.lokiRulerURL,
 		ctrlCtx.runOptions.enableUserClusterMLA,
+	)
+}
+
+func createKymaController(ctrlCtx *controllerContext) error {
+	return kyma.Add(
+		ctrlCtx.mgr,
+		ctrlCtx.log,
+		ctrlCtx.runOptions.workerCount,
+		ctrlCtx.runOptions.workerName,
+		ctrlCtx.versions,
+		ctrlCtx.clientProvider,
 	)
 }
 
